@@ -1,7 +1,7 @@
 import streamlit as st
 import ast
 import hashlib
-import io
+from io import StringIO
 
 st.title("🐍 Code Smell Detector")
 st.write("Upload a Python file to detect basic code smells like long functions, too many parameters, and duplicate code blocks.")
@@ -13,11 +13,10 @@ if uploaded_file:
     code = uploaded_file.read().decode("utf-8")
     st.code(code, language="python")
 
-    # Block size slider
-    st.sidebar.title("🔧 Detection Settings")
-    block_size = st.sidebar.slider("Block size for duplicate detection", 3, 10, value=5)
+    st.subheader("⚙️ Duplicate Detection Settings")
+    block_size = st.slider("Block size for duplicate detection (lines)", min_value=2, max_value=10, value=3)
 
-    # === AST-BASED DETECTOR ===
+    # ---------- Code Smell Detector Class ----------
     class CodeSmellDetector(ast.NodeVisitor):
         def __init__(self):
             self.smells = []
@@ -39,50 +38,43 @@ if uploaded_file:
 
             self.generic_visit(node)
 
-    tree = ast.parse(code)
-    detector = CodeSmellDetector()
-    detector.visit(tree)
-
-    # === DUPLICATE BLOCK DETECTOR ===
-    def detect_duplicate_blocks(code_string, block_size):
-        lines = [line.rstrip() for line in code_string.splitlines() if line.strip()]
+    # ---------- Duplicate Code Block Detector ----------
+    def find_duplicate_blocks(source_code, block_size):
+        lines = [line.strip() for line in source_code.splitlines()]
         hashes = {}
         duplicates = []
 
         for i in range(len(lines) - block_size + 1):
-            block = "\n".join(lines[i:i + block_size]).strip()
-            block_hash = hashlib.md5(block.encode()).hexdigest()
+            block = "\n".join(lines[i:i+block_size])
+            h = hashlib.md5(block.encode()).hexdigest()
 
-            if block_hash in hashes:
-                original = hashes[block_hash]
-                duplicates.append(
-                    f"🟡 Duplicate code block detected between lines {original + 1} and {i + 1}"
-                )
+            if h in hashes:
+                duplicates.append((i + 1, hashes[h] + 1, block))
             else:
-                hashes[block_hash] = i
+                hashes[h] = i
 
         return duplicates
 
-    duplicate_smells = detect_duplicate_blocks(code, block_size)
+    # ---------- Run Analyzers ----------
+    tree = ast.parse(code)
+    detector = CodeSmellDetector()
+    detector.visit(tree)
 
-    # === COMBINE AND DISPLAY RESULTS ===
+    duplicate_blocks = find_duplicate_blocks(code, block_size)
+
+    # ---------- Results ----------
     st.subheader("🚨 Code Smells Detected:")
-
-    all_smells = detector.smells + duplicate_smells
-
-    if all_smells:
-        for smell in all_smells:
+    if detector.smells:
+        for smell in detector.smells:
             st.write(smell)
     else:
-        st.success("✅ No code smells detected!")
+        st.success("✅ No function-level code smells detected!")
 
-    # === DOWNLOAD REPORT ===
-    report_text = "\n".join(all_smells) if all_smells else "No code smells detected."
-    report_bytes = io.BytesIO(report_text.encode("utf-8"))
-
-    st.download_button(
-        label="📄 Download Report",
-        data=report_bytes,
-        file_name="code_smell_report.txt",
-        mime="text/plain"
-    )
+    st.subheader("📦 Duplicate Code Blocks:")
+    if duplicate_blocks:
+        for dup in duplicate_blocks:
+            st.error(f"🔁 Duplicate block found at lines {dup[0]} and {dup[1]}")
+            with st.expander("Show Duplicate Block"):
+                st.code(dup[2])
+    else:
+        st.success("✅ No duplicate blocks detected!")
